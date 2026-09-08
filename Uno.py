@@ -94,7 +94,9 @@ def get_all_stickers():
 def register_user(uid, username):
     try:
         conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-        c.execute("INSERT OR IGNORE INTO users(id,username) VALUES(?,?)", (uid, username))
+        c.execute("INSERT OR IGNORE INTO users(id,username,created_at) VALUES(?,?,datetime('now'))", (uid, username))
+        c.execute("UPDATE users SET username=? WHERE id=?", (username, uid))
+        c.execute("INSERT OR IGNORE INTO leaderboard(user_id,wins,games) VALUES(?,0,0)", (uid,))
         conn.commit(); conn.close()
     except: pass
 
@@ -477,8 +479,8 @@ class UnoGame:
 
 games={}; wait_tasks={}; game_settings_cache={}; waiting_swap_target={}
 
-def kb_cards(tag=""):
-    return InlineKeyboardMarkup().add(InlineKeyboardButton("\U0001f440 \u041a\u0430\u0440\u0442\u044b",switch_inline_query_current_chat=tag))
+def kb_cards():
+    return InlineKeyboardMarkup().add(InlineKeyboardButton("\U0001f440 \u041a\u0430\u0440\u0442\u044b",switch_inline_query_current_chat=""))
 
 def stats_text(game):
     top=game.discard[-1]
@@ -586,12 +588,6 @@ async def send_state(chat_id, game, extra="", skip_sticker=False):
 @dp.inline_handler()
 async def inline_handler(q):
     uid=q.from_user.id; game=None
-    if q.query.startswith("h"):
-        try: want=int(q.query[1:])
-        except Exception: want=None
-        if want is not None and want!=uid:
-            await bot.answer_inline_query(q.id,results=[InlineQueryResultArticle(id="nf",title="\u26a0\ufe0f \u042d\u0442\u043e \u043d\u0435 \u0432\u0430\u0448\u0438 \u043a\u0430\u0440\u0442\u044b",input_message_content=InputTextMessageContent(""))],cache_time=0,is_personal=True)
-            return
     for g in games.values():
         if uid in g.players: game=g; break
     if not game:
@@ -665,7 +661,7 @@ async def sticker_listener(msg):
                 if drawn>0: await bot.send_message(cid,"\U0001f0cf "+nm+" взял "+str(drawn)+" карт")
                 if game.has_playable(uid):
                     game.pending_draw[uid]=-1
-                    await bot.send_message(cid,"\u2705 "+nm+", \u0445\u043e\u0434\u0438\u0442\u0435!",reply_markup=kb_cards("h"+str(cur)))
+                    await bot.send_message(cid,"\u2705 "+nm+", \u0445\u043e\u0434\u0438\u0442\u0435!",reply_markup=kb_cards())
                 else:
                     game.next_turn()
                     await send_state(cid,game,skip_sticker=True)
@@ -884,7 +880,7 @@ async def intercept_uno(msg):
                 if drawn>0: await bot.send_message(cid,"\U0001f0cf "+nm+" взял "+str(drawn)+" карт")
                 if game.has_playable(uid):
                     game.pending_draw[uid]=-1
-                    await bot.send_message(cid,"\u2705 "+nm,reply_markup=kb_cards("h"+str(cur)))
+                    await bot.send_message(cid,"\u2705 "+nm,reply_markup=kb_cards())
                 else: game.next_turn(); await send_state(cid,game,skip_sticker=True)
         elif act2=="pass":
             game.pending_draw.pop(uid,None)
@@ -925,9 +921,11 @@ async def cmd_top(msg):
     rows=get_top()
     if not rows: return await msg.answer("\U0001f4ca \u041d\u0435\u0442 \u0438\u0433\u0440.")
     medals=["\U0001f947","","\U0001f949"]; t="\U0001f3c6\n"
-    for i,(uid,w,gc) in enumerate(rows):
+    for i,row in enumerate(rows):
+        uid,w,gc=row[0],row[2],row[3]
+        name=row[1] if row[1] else str(uid)
         m=medals[i] if i<3 else str(i+1)+"."
-        t+=m+" <a href='tg://user?id="+str(uid)+"'>"+str(uid)+"</a> \U0001f3c6"+str(w)+"/\U0001f3ae"+str(gc)+"\n"
+        t+=m+" <a href='tg://user?id="+str(uid)+"'>"+name+"</a> \U0001f3c6"+str(w)+"/\U0001f3ae"+str(gc)+"\n"
     await msg.answer(t,parse_mode="HTML")
 
 @dp.message_handler(commands=["unostat"])
@@ -944,7 +942,27 @@ async def cmd_startuno(msg):
     if msg.chat.type=="private": return await msg.answer("\u2757 \u0422\u043e\u043b\u044c\u043a\u043e \u0432 \u0433\u0440\u0443\u043f\u043f\u0430\u0445!")
     register_user(msg.from_user.id, msg.from_user.username)
     cid=msg.chat.id
-    if cid in games and games[cid].is_active: return await msg.answer("\u26a0\ufe0f")
+    uid=msg.from_user.id
+    name=msg.from_user.full_name or (IGROK_CAP+str(uid))
+    game=games.get(cid)
+    # Active game: auto-join
+    if game and game.is_active:
+        if uid in game.players:
+            return await msg.answer("\u26a0\ufe0f \u0412\u044b \u0443\u0436\u0435 \u0432 \u0438\u0433\u0440\u0435!")
+        game.add_player(uid,name)
+        game.turn_order.append(uid)
+        game.afk_count[uid]=0
+        await msg.answer("\U0001f389 <a href='tg://user?id="+str(uid)+"'>"+name+"</a> \u043f\u0440\u0438\u0441\u043e\u0435\u0434\u0438\u043d\u0438\u043b\u0441\u044f \u043a \u0438\u0433\u0440\u0435!",parse_mode="HTML")
+        await send_state(cid,game,skip_sticker=True)
+        return
+    # Lobby exists: join lobby
+    if game and not game.is_active:
+        if uid in game.players:
+            return await msg.answer("\u26a0\ufe0f \u0412\u044b \u0443\u0436\u0435 \u0432 \u043b\u043e\u0431\u0431\u0438!")
+        game.add_player(uid,name)
+        await update_lobby_msg(game)
+        await msg.answer("\U0001f389 <a href='tg://user?id="+str(uid)+"'>"+name+"</a> \u043f\u0440\u0438\u0441\u043e\u0435\u0434\u0438\u043d\u0438\u043b\u0441\u044f \u043a \u043b\u043e\u0431\u0431\u0438!",parse_mode="HTML")
+        return
     sent=await msg.answer("\u23f3 \u0412\u0440\u0435\u043c\u044f:",reply_markup=kb_wait())
     try: await bot.pin_chat_message(cid,sent.message_id,disable_notification=True)
     except: pass
