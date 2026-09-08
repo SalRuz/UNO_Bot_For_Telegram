@@ -188,6 +188,7 @@ class UnoGame:
         self.intervened_this_turn=set()
         self.uno_pending={}  # uid: time when player reached 1 card
         self.notif=[]
+        self.finish_order=[]; self.scores={}
         self.uno_task={}  # uid: asyncio task for checking timeout
 
     def add_player(self, uid, name):
@@ -307,7 +308,7 @@ class UnoGame:
                 self.notif.append("\u2705 "+self.player_names.get(uid,IGROK_CAP)+" \u0423\u043d\u043e! (\u0430\u0432\u0442\u043e)")
             else:
                 self.uno_pending[uid]=time.time()
-        if not self.players[uid]: self.winner=uid; self.is_active=False
+        if not self.players[uid]: self._place(uid)
         return True,"",action,turn_advanced
 
     def draw_exact(self, uid, count):
@@ -344,6 +345,27 @@ class UnoGame:
                 self.notif.append("\u26a0\ufe0f "+self.player_names.get(uid,IGROK_CAP)+" \u043d\u0435 \u0441\u043a\u0430\u0437\u0430\u043b \u0423\u043d\u043e! +2 \u043a\u0430\u0440\u0442\u044b")
                 del self.uno_pending[uid]
     
+    def _place(self, uid):
+        n=len(self.players)
+        place=len(self.finish_order)+1
+        pts=n-place
+        pw="очко" if pts%10==1 and pts%100!=11 else ("очка" if pts%10 in (2,3,4) and not 11<=pts%100<=14 else "очков")
+        self.finish_order.append(uid); self.scores[uid]=pts
+        self.notif.append("\U0001f3c6 "+self.player_names.get(uid,IGROK_CAP)+" занял "+str(place)+" место! +"+str(pts)+" "+pw)
+        self.pending_draw.pop(uid,None)
+        if uid in self.turn_order:
+            ci=self.turn_order.index(uid)
+            self.turn_order.remove(uid)
+            if self.turn_order:
+                if self.direction==1: self.current_idx=(ci-1)%len(self.turn_order)
+                else: self.current_idx=ci%len(self.turn_order)
+        if len(self.turn_order)<=1:
+            if self.turn_order:
+                last=self.turn_order[0]
+                self.finish_order.append(last); self.scores[last]=0
+                self.notif.append("\U0001f3c6 "+self.player_names.get(last,IGROK_CAP)+" занял "+str(len(self.finish_order))+" место! +0 очков")
+            self.winner=self.finish_order[0]; self.is_active=False
+
     def next_turn(self):
         self.pending_draw={k:v for k,v in self.pending_draw.items() if v>0}
         # Check UNO penalty: any player with uno_pending who hasn't said UNO
@@ -351,7 +373,7 @@ class UnoGame:
         self.intervened_this_turn=set()
     def current_player(self): return self.turn_order[self.current_idx]
     def rotate_hands(self):
-        u=list(self.players.keys()); h=[self.players[x][:] for x in u]
+        u=[x for x in self.players.keys() if x not in self.finish_order]; h=[self.players[x][:] for x in u]
         random.shuffle(h)
         for i,x in enumerate(u): self.players[x]=h[i]
     def swap_hands(self,a,b): self.players[a],self.players[b]=self.players[b],self.players[a]
@@ -455,8 +477,8 @@ class UnoGame:
 
 games={}; wait_tasks={}; game_settings_cache={}; waiting_swap_target={}
 
-def kb_cards():
-    return InlineKeyboardMarkup().add(InlineKeyboardButton("\U0001f440 \u041a\u0430\u0440\u0442\u044b",switch_inline_query_current_chat=""))
+def kb_cards(tag=""):
+    return InlineKeyboardMarkup().add(InlineKeyboardButton("\U0001f440 \u041a\u0430\u0440\u0442\u044b",switch_inline_query_current_chat=tag))
 
 def stats_text(game):
     top=game.discard[-1]
@@ -564,13 +586,19 @@ async def send_state(chat_id, game, extra="", skip_sticker=False):
 @dp.inline_handler()
 async def inline_handler(q):
     uid=q.from_user.id; game=None
+    if q.query.startswith("h"):
+        try: want=int(q.query[1:])
+        except Exception: want=None
+        if want is not None and want!=uid:
+            await bot.answer_inline_query(q.id,results=[InlineQueryResultArticle(id="nf",title="\u26a0\ufe0f \u042d\u0442\u043e \u043d\u0435 \u0432\u0430\u0448\u0438 \u043a\u0430\u0440\u0442\u044b",input_message_content=InputTextMessageContent(""))],cache_time=0,is_personal=True)
+            return
     for g in games.values():
         if uid in g.players: game=g; break
     if not game:
-        await bot.answer_inline_query(q.id,results=[InlineQueryResultArticle(id="ng",title="\u041d\u0435 \u0432 \u0438\u0433\u0440\u0435",input_message_content=InputTextMessageContent("/startuno"))],cache_time=1); return
+        await bot.answer_inline_query(q.id,results=[InlineQueryResultArticle(id="ng",title="\u041d\u0435 \u0432 \u0438\u0433\u0440\u0435",input_message_content=InputTextMessageContent("/startuno"))],cache_time=0,is_personal=True); return
     r=game.get_inline_results(uid)
     if not r: r=[InlineQueryResultArticle(id="em",title="\u041d\u0435\u0442 \u043a\u0430\u0440\u0442",input_message_content=InputTextMessageContent(""))]
-    await bot.answer_inline_query(q.id,results=r,cache_time=1)
+    await bot.answer_inline_query(q.id,results=r,cache_time=0,is_personal=True)
 
 # ================= STICKER LISTENER =================
 @dp.message_handler(content_types=ContentTypes.STICKER)
@@ -637,7 +665,7 @@ async def sticker_listener(msg):
                 if drawn>0: await bot.send_message(cid,"\U0001f0cf "+nm+" взял "+str(drawn)+" карт")
                 if game.has_playable(uid):
                     game.pending_draw[uid]=-1
-                    await bot.send_message(cid,"\u2705 "+nm+", \u0445\u043e\u0434\u0438\u0442\u0435!",reply_markup=kb_cards())
+                    await bot.send_message(cid,"\u2705 "+nm+", \u0445\u043e\u0434\u0438\u0442\u0435!",reply_markup=kb_cards("h"+str(cur)))
                 else:
                     game.next_turn()
                     await send_state(cid,game,skip_sticker=True)
@@ -714,9 +742,18 @@ async def sticker_listener(msg):
         game.intervened_this_turn.add(uid)
         if game.winner is not None:
             if game.turn_timer_task: game.turn_timer_task.cancel()
+            while game.notif:
+                await bot.send_message(cid,game.notif.pop(0))
             await update_leaderboard(game.winner,list(game.players.keys()))
-            wn=game.player_names[game.winner]
-            await bot.send_message(cid,"\U0001f3c6 "+wn+"! "+game.duration_str()); games.pop(cid,None); return
+            try: await bot.unpin_chat_message(cid)
+            except Exception: pass
+            t="\U0001f3c6 \u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b \u0438\u0433\u0440\u044b!\n"
+            for pi,pu in enumerate(game.finish_order):
+                pv=game.scores.get(pu,0)
+                pw="\u043e\u0447\u043a\u043e" if pv%10==1 and pv%100!=11 else ("\u043e\u0447\u043a\u0430" if pv%10 in (2,3,4) and not 11<=pv%100<=14 else "\u043e\u0447\u043a\u043e\u0432")
+                t+=str(pi+1)+". "+game.player_names.get(pu,str(pu))+" \u2014 "+str(pv)+" "+pw+"\n"
+            t+="\u23f1 "+game.duration_str()
+            await bot.send_message(cid,t); games.pop(cid,None); return
         if act=="choose_color":
             await bot.send_message(cid,"\U0001f308",reply_markup=kb_colors(uid)); return
         if act=="swap_7":
@@ -728,14 +765,24 @@ async def sticker_listener(msg):
         await send_state(cid,game,skip_sticker=True); return
 
     # Normal turn
+    if game.current_player()!=uid: return
     ok,mt,act,adv=game.play_card(uid,mi)
     if act=="skip": await bot.send_message(cid,"\U0001f6ab "+game.player_names.get(game.skip_target,IGROK_CAP)+" \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u0435\u0442 \u0445\u043e\u0434")
     if not ok: await bot.send_message(cid,"\U0001f6ab"); return
     if game.winner is not None:
         if game.turn_timer_task: game.turn_timer_task.cancel()
+        while game.notif:
+            await bot.send_message(cid,game.notif.pop(0))
         await update_leaderboard(game.winner,list(game.players.keys()))
-        wn=game.player_names[game.winner]
-        await bot.send_message(cid,"\U0001f3c6 "+wn+"! "+game.duration_str()); games.pop(cid,None); return
+        try: await bot.unpin_chat_message(cid)
+        except Exception: pass
+        t="\U0001f3c6 \u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b \u0438\u0433\u0440\u044b!\n"
+        for pi,pu in enumerate(game.finish_order):
+            pv=game.scores.get(pu,0)
+            pw="\u043e\u0447\u043a\u043e" if pv%10==1 and pv%100!=11 else ("\u043e\u0447\u043a\u0430" if pv%10 in (2,3,4) and not 11<=pv%100<=14 else "\u043e\u0447\u043a\u043e\u0432")
+            t+=str(pi+1)+". "+game.player_names.get(pu,str(pu))+" \u2014 "+str(pv)+" "+pw+"\n"
+        t+="\u23f1 "+game.duration_str()
+        await bot.send_message(cid,t); games.pop(cid,None); return
     if act=="choose_color":
         await bot.send_message(cid,"\U0001f308",reply_markup=kb_colors(uid)); return
     if act=="swap_7":
@@ -837,7 +884,7 @@ async def intercept_uno(msg):
                 if drawn>0: await bot.send_message(cid,"\U0001f0cf "+nm+" взял "+str(drawn)+" карт")
                 if game.has_playable(uid):
                     game.pending_draw[uid]=-1
-                    await bot.send_message(cid,"\u2705 "+nm,reply_markup=kb_cards())
+                    await bot.send_message(cid,"\u2705 "+nm,reply_markup=kb_cards("h"+str(cur)))
                 else: game.next_turn(); await send_state(cid,game,skip_sticker=True)
         elif act2=="pass":
             game.pending_draw.pop(uid,None)
@@ -971,7 +1018,10 @@ async def cb_swap7(q):
     if not game: return await q.answer("\u26a0\ufe0f",show_alert=True)
     target=q.data.split(":")[1]; req=waiting_swap_target.pop(q.message.chat.id,None)
     if target!="skip":
-        tuid=int(target); game.swap_hands(req,tuid)
+        tuid=int(target)
+        if req in game.finish_order or tuid in game.finish_order:
+            return await q.answer("\u26a0\ufe0f",show_alert=True)
+        game.swap_hands(req,tuid)
         await bot.send_message(q.message.chat.id,"\U0001f504 "+game.player_names.get(req,IGROK_CAP)+" \u043f\u043e\u043c\u0435\u043d\u044f\u043b\u0441\u044f \u043a\u0430\u0440\u0442\u0430\u043c\u0438 \u0441 "+game.player_names.get(tuid,IGROK_CAP)+"!")
     else:
         await bot.send_message(q.message.chat.id,"\U0001f504 "+game.player_names.get(req,IGROK_CAP)+" \u043d\u0435 \u0441\u0442\u0430\u043b \u043c\u0435\u043d\u044f\u0442\u044c\u0441\u044f \u043a\u0430\u0440\u0442\u0430\u043c\u0438")
