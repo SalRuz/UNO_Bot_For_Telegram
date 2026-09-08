@@ -744,7 +744,7 @@ async def sticker_listener(msg):
             if game.turn_timer_task: game.turn_timer_task.cancel()
             while game.notif:
                 await bot.send_message(cid,game.notif.pop(0))
-            await update_leaderboard(game.winner,list(game.players.keys()))
+            update_leaderboard(game.winner,list(game.players.keys()))
             try: await bot.unpin_chat_message(cid)
             except Exception: pass
             t="\U0001f3c6 \u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b \u0438\u0433\u0440\u044b!\n"
@@ -773,7 +773,7 @@ async def sticker_listener(msg):
         if game.turn_timer_task: game.turn_timer_task.cancel()
         while game.notif:
             await bot.send_message(cid,game.notif.pop(0))
-        await update_leaderboard(game.winner,list(game.players.keys()))
+        update_leaderboard(game.winner,list(game.players.keys()))
         try: await bot.unpin_chat_message(cid)
         except Exception: pass
         t="\U0001f3c6 \u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b \u0438\u0433\u0440\u044b!\n"
@@ -833,7 +833,7 @@ async def intercept_uno(msg):
         except: pass
         if game.winner is not None:
             if game.turn_timer_task: game.turn_timer_task.cancel()
-            await update_leaderboard(game.winner,list(game.players.keys()))
+            update_leaderboard(game.winner,list(game.players.keys()))
             wn=game.player_names[game.winner]
             await bot.send_message(cid,"\U0001f3c6 "+wn+"!"); games.pop(cid,None); return
         if act=="choose_color":
