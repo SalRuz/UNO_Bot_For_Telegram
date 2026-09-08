@@ -1,1 +1,0 @@
-# UNO_Bot_For_Telegram
