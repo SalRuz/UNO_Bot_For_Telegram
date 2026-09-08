@@ -143,19 +143,8 @@ class Card:
         icon=COLOR_RU.get(self.color,"")
         return f"{icon} {self.value}" if self.ctype=="number" else f"{icon} {TYPE_RU.get(self.ctype,self.ctype)}"
     def can_play_on(self, top):
-        # +2 stacking: only draw_two on draw_two
-        if top.ctype=="draw_two":
-            if top.value=="resolved":
-                # After penalty drawn: same color OR any +2 (new chain) OR wild
-                return self.ctype=="draw_two" or self.color==top.color or self.ctype in ("wild","wild_draw_four")
-            return self.ctype=="draw_two"
-        # wild_draw_four stacking: only wild_draw_four on wild_draw_four
-        if top.ctype=="wild_draw_four": return self.ctype=="wild_draw_four"
-        # wild_draw_four can be played on anything
-        if self.ctype=="wild_draw_four": return True
-        # wild can be played on anything
-        if self.ctype=="wild": return True
-        # same color or same type or same number
+        if top is None: return True
+        if self.ctype in ("wild","wild_draw_four"): return True
         if self.color==top.color: return True
         if self.ctype!="number" and self.ctype==top.ctype: return True
         if self.ctype=="number" and top.ctype=="number" and self.value==top.value: return True
@@ -252,6 +241,8 @@ class UnoGame:
         return False
 
     def play_card(self, uid, idx):
+        if self.pending_draw.get(uid,0)>0:
+            return False,"\u26a0\ufe0f \u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0432\u043e\u0437\u044c\u043c\u0438\u0442\u0435 \u043a\u0430\u0440\u0442\u044b!",None,False
         if not self.can_play(uid,idx): return False,"\U0001f6ab \u041d\u0435\u043b\u044c\u0437\u044f!",None,False
         card=self.players[uid].pop(idx)
         if self.pending_draw.get(uid)==-1: self.pending_draw.pop(uid,None)
@@ -733,7 +724,7 @@ async def sticker_listener(msg):
     if not is_turn and interv:
         # Intervention: exact same card required
         if not (fc.color==top.color and fc.ctype==top.ctype and fc.value==top.value):
-            await bot.send_message(cid,"\u26a0\ufe0f \u041d\u0443\u0436\u043d\u0430 \u0442\u043e\u0447\u043d\u0430\u044f \u043a\u043e\u043f\u0438\u044f!"); return
+            return
         if uid in game.intervened_this_turn:
             await bot.send_message(cid,"\u26a0\ufe0f \u0423\u0436\u0435 \u0432\u043c\u0435\u0448\u0430\u043b\u0438\u0441\u044c!"); return
         ok,mt,act,adv=game.play_card(uid,mi)
@@ -765,7 +756,9 @@ async def sticker_listener(msg):
         await send_state(cid,game,skip_sticker=True); return
 
     # Normal turn
-    if game.current_player()!=uid: return
+    if game.current_player()!=uid:
+        print("UNO IGNORE sticker: uid",uid,"current",game.current_player(),"key",card_key)
+        return
     ok,mt,act,adv=game.play_card(uid,mi)
     if act=="skip": await bot.send_message(cid,"\U0001f6ab "+game.player_names.get(game.skip_target,IGROK_CAP)+" \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u0435\u0442 \u0445\u043e\u0434")
     if not ok: await bot.send_message(cid,"\U0001f6ab"); return
@@ -926,12 +919,13 @@ async def cmd_top(msg):
     if not rows: return await msg.answer("\U0001f4ca \u041d\u0435\u0442 \u0438\u0433\u0440.")
     medals=["\U0001f947","","\U0001f949"]; t="\U0001f3c6 \u0422\u043e\u043f-25 \u0438\u0433\u0440\u043e\u043a\u043e\u0432:\n"
     for i,row in enumerate(rows):
-        if len(row)>=4:
-            uid,name,w,gc=row[0],row[1],row[2],row[3]
-        else:
-            uid,w,gc=row[0],row[1],row[2]
-            name=str(uid)
-        if not name: name=str(uid)
+        uid,w,gc=row[0],row[2],row[3]
+        conn=sqlite3.connect(DB_PATH); c=conn.cursor()
+        c.execute("SELECT full_name,username FROM users WHERE id=?",(uid,))
+        urow=c.fetchone(); conn.close()
+        if urow and urow[0]: name=urow[0]
+        elif urow and urow[1]: name=urow[1]
+        else: name=str(uid)
         name=str(name).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         m=medals[i] if i<3 else str(i+1)+"."
         t+=m+" <a href='tg://user?id="+str(uid)+"'>"+name+"</a> \U0001f3c6"+str(w)+"/\U0001f3ae"+str(gc)+"\n"
@@ -1035,7 +1029,7 @@ async def cb_color(q):
     game=games.get(q.message.chat.id)
     if not game: return await q.answer("\u26a0\ufe0f",show_alert=True)
     ps=q.data.split(":"); color,puid=ps[1],int(ps[2])
-    if game.waiting_color_for!=puid: return await q.answer("\u26a0\ufe0f",show_alert=True)
+    if game.waiting_color_for!=puid: return await q.answer("\u26a0\ufe0f \u041d\u0435 \u0432\u0430\u0448 \u0432\u044b\u0431\u043e\u0440!",show_alert=True)
     game.waiting_color_for=None
     try: await q.message.edit_reply_markup(reply_markup=None)
     except Exception: pass
@@ -1047,7 +1041,8 @@ async def cb_swap7(q):
     game=games.get(q.message.chat.id)
     if not game: return await q.answer("\u26a0\ufe0f",show_alert=True)
     target=q.data.split(":")[1]; req=waiting_swap_target.pop(q.message.chat.id,None)
-    if req is None: return await q.answer()
+    if req is None: return await q.answer("\u26a0\ufe0f \u0423\u0436\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u043e",show_alert=True)
+    if q.from_user.id!=req: return await q.answer("\u26a0\ufe0f \u041d\u0435 \u0432\u0430\u0448 \u0432\u044b\u0431\u043e\u0440!",show_alert=True)
     try: await q.message.edit_reply_markup(reply_markup=None)
     except Exception: pass
     if target!="skip":
