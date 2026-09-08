@@ -193,10 +193,12 @@ class UnoGame:
         self.uno_pending={}  # uid: time when player reached 1 card
         self.notif=[]
         self.finish_order=[]; self.scores={}
+        self.left_players=set()
         self.uno_task={}  # uid: asyncio task for checking timeout
 
     def add_player(self, uid, name):
         if uid in self.players: return False
+        if uid in getattr(self,"left_players",()): return False
         self.players[uid]=[]; self.player_names[uid]=name; self.afk_count[uid]=0
         if self.is_active: self._deal(uid,8); self.turn_order.append(uid)
         return True
@@ -204,7 +206,7 @@ class UnoGame:
     def players_list_text(self):
         if not self.player_names: return "_\u043f\u043e\u043a\u0430 \u043d\u0438\u043a\u043e\u0433\u043e_"
         lines=[]
-        for uid,nm in self.player_names.items():
+        for uid,nm in [(u,self.player_names.get(u,"?")) for u in self.players.keys()]:
             c=len(self.players.get(uid,[])); e=f" ({c})" if self.is_active else ""
             lines.append(f"\u2022 <a href='tg://user?id={uid}'>{nm}</a>{e}")
         return "\n".join(lines)
@@ -253,6 +255,7 @@ class UnoGame:
         if self.pending_draw.get(uid,0)>0:
             return False,"\u26a0\ufe0f \u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0432\u043e\u0437\u044c\u043c\u0438\u0442\u0435 \u043a\u0430\u0440\u0442\u044b!",None,False
         if not self.can_play(uid,idx): return False,"\U0001f6ab \u041d\u0435\u043b\u044c\u0437\u044f!",None,False
+        if self.current_player()==uid: self.check_uno_penalty(uid)
         card=self.players[uid].pop(idx)
         if self.pending_draw.get(uid)==-1: self.pending_draw.pop(uid,None)
         self.clear_skip_marker(uid)
@@ -397,7 +400,8 @@ class UnoGame:
         s=int(time.time()-self.start_time); m,sc=divmod(s,60); return str(m)+"\u043c "+str(sc)+"\u0441"
     def remove_player(self, uid):
         if uid in self.players:
-            del self.players[uid]; del self.player_names[uid]
+            del self.players[uid]
+            self.left_players.add(uid)
             self.afk_count.pop(uid,None); self.pending_draw.pop(uid,None)
             if uid in self.turn_order:
                 self.turn_order.remove(uid)
@@ -451,8 +455,8 @@ class UnoGame:
         for idx,card in enumerate(hand):
             cp=False
             if top:
-                if is_turn: cp=card.can_play_on(top)
-                elif intervention: cp=(card.color==top.color and card.ctype==top.ctype and card.value==top.value)
+                if is_turn and pending<=0 and not waiting_color: cp=card.can_play_on(top)
+                elif intervention and pending<=0 and not waiting_color: cp=(card.color==top.color and card.ctype==top.ctype and card.value==top.value)
             items.append((idx,card,cp))
         items.sort(key=lambda x: x[1].sort_key(x[2]))
 
@@ -1135,10 +1139,14 @@ async def cmd_unoleave(msg):
         return await msg.answer("⚠️ Вы не в игре.")
     nm=game.player_names.get(uid,IGROK_CAP)
     game.remove_player(uid)
+    if game.is_active:
+        game.finish_order.append(uid); game.scores[uid]=0
     await msg.answer("🚪 "+nm+" вышел из игры.")
     if not game.is_active:
         # Lobby mode - just update lobby message
         await update_lobby_msg(game)
+    elif len(game.players)>=2:
+        await send_state(cid,game,skip_sticker=True)
         if len(game.players)==0:
             games.pop(cid,None)
     else:
