@@ -91,11 +91,15 @@ def get_all_stickers():
     c.execute("SELECT key, file_id FROM stickers ORDER BY key")
     rows = c.fetchall(); conn.close(); return rows
 
-def register_user(uid, username):
+def register_user(uid, username, fullname=None):
     try:
         conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        try: c.execute("ALTER TABLE users ADD COLUMN full_name TEXT")
+        except Exception: pass
         c.execute("INSERT OR IGNORE INTO users(id,username,created_at) VALUES(?,?,datetime('now'))", (uid, username))
         c.execute("UPDATE users SET username=? WHERE id=?", (username, uid))
+        if fullname:
+            c.execute("UPDATE users SET full_name=? WHERE id=?", (fullname, uid))
         c.execute("INSERT OR IGNORE INTO leaderboard(user_id,wins,games) VALUES(?,0,0)", (uid,))
         conn.commit(); conn.close()
     except: pass
@@ -913,14 +917,14 @@ async def intercept_uno(msg):
 # ================= COMMANDS =================
 @dp.message_handler(commands=["start"])
 async def cmd_start(msg):
-    register_user(msg.from_user.id, msg.from_user.username)
+    register_user(msg.from_user.id, msg.from_user.username, msg.from_user.full_name)
     await msg.answer("\U0001f0cf <b>UNO Bot</b>\n/startuno | /unostat | /top",parse_mode="HTML")
 
 @dp.message_handler(commands=["top"])
 async def cmd_top(msg):
     rows=get_top()
     if not rows: return await msg.answer("\U0001f4ca \u041d\u0435\u0442 \u0438\u0433\u0440.")
-    medals=["\U0001f947","","\U0001f949"]; t="\U0001f3c6\n"
+    medals=["\U0001f947","","\U0001f949"]; t="\U0001f3c6 \u0422\u043e\u043f-25 \u0438\u0433\u0440\u043e\u043a\u043e\u0432:\n"
     for i,row in enumerate(rows):
         if len(row)>=4:
             uid,name,w,gc=row[0],row[1],row[2],row[3]
@@ -928,6 +932,7 @@ async def cmd_top(msg):
             uid,w,gc=row[0],row[1],row[2]
             name=str(uid)
         if not name: name=str(uid)
+        name=str(name).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         m=medals[i] if i<3 else str(i+1)+"."
         t+=m+" <a href='tg://user?id="+str(uid)+"'>"+name+"</a> \U0001f3c6"+str(w)+"/\U0001f3ae"+str(gc)+"\n"
     await msg.answer(t,parse_mode="HTML")
@@ -944,7 +949,7 @@ async def cmd_unostat(msg):
 @dp.message_handler(commands=["startuno"])
 async def cmd_startuno(msg):
     if msg.chat.type=="private": return await msg.answer("\u2757 \u0422\u043e\u043b\u044c\u043a\u043e \u0432 \u0433\u0440\u0443\u043f\u043f\u0430\u0445!")
-    register_user(msg.from_user.id, msg.from_user.username)
+    register_user(msg.from_user.id, msg.from_user.username, msg.from_user.full_name)
     cid=msg.chat.id
     uid=msg.from_user.id
     name=msg.from_user.full_name or (IGROK_CAP+str(uid))
@@ -1020,7 +1025,7 @@ async def cb_go(q):
 async def cb_join(q):
     game=games.get(q.message.chat.id)
     if not game: return await q.answer()
-    register_user(q.from_user.id, q.from_user.username)
+    register_user(q.from_user.id, q.from_user.username, q.from_user.full_name)
     uid=q.from_user.id; name=q.from_user.full_name or (IGROK_CAP+str(uid))
     if game.add_player(uid,name):
         await update_lobby_msg(game)
@@ -1031,7 +1036,10 @@ async def cb_color(q):
     if not game: return await q.answer("\u26a0\ufe0f",show_alert=True)
     ps=q.data.split(":"); color,puid=ps[1],int(ps[2])
     if game.waiting_color_for!=puid: return await q.answer("\u26a0\ufe0f",show_alert=True)
-    game.set_color(color); game.waiting_color_for=None
+    game.waiting_color_for=None
+    try: await q.message.edit_reply_markup(reply_markup=None)
+    except Exception: pass
+    game.set_color(color)
     game.next_turn(); await send_state(q.message.chat.id,game,skip_sticker=True); await q.answer()
 
 @dp.callback_query_handler(Text(startswith="swap7:"))
@@ -1039,6 +1047,9 @@ async def cb_swap7(q):
     game=games.get(q.message.chat.id)
     if not game: return await q.answer("\u26a0\ufe0f",show_alert=True)
     target=q.data.split(":")[1]; req=waiting_swap_target.pop(q.message.chat.id,None)
+    if req is None: return await q.answer()
+    try: await q.message.edit_reply_markup(reply_markup=None)
+    except Exception: pass
     if target!="skip":
         tuid=int(target)
         if req in game.finish_order or tuid in game.finish_order:
