@@ -922,8 +922,12 @@ async def cmd_top(msg):
     if not rows: return await msg.answer("\U0001f4ca \u041d\u0435\u0442 \u0438\u0433\u0440.")
     medals=["\U0001f947","","\U0001f949"]; t="\U0001f3c6\n"
     for i,row in enumerate(rows):
-        uid,w,gc=row[0],row[2],row[3]
-        name=row[1] if row[1] else str(uid)
+        if len(row)>=4:
+            uid,name,w,gc=row[0],row[1],row[2],row[3]
+        else:
+            uid,w,gc=row[0],row[1],row[2]
+            name=str(uid)
+        if not name: name=str(uid)
         m=medals[i] if i<3 else str(i+1)+"."
         t+=m+" <a href='tg://user?id="+str(uid)+"'>"+name+"</a> \U0001f3c6"+str(w)+"/\U0001f3ae"+str(gc)+"\n"
     await msg.answer(t,parse_mode="HTML")
