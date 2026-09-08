@@ -54,6 +54,14 @@ def init_db():
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("CREATE TABLE IF NOT EXISTS stickers (key TEXT PRIMARY KEY, file_id TEXT NOT NULL)")
     c.execute("CREATE TABLE IF NOT EXISTS leaderboard (user_id INTEGER PRIMARY KEY, wins INTEGER DEFAULT 0, games INTEGER DEFAULT 0)")
+    try:
+        cols=[r[1] for r in c.execute("PRAGMA table_info(leaderboard)").fetchall()]
+        if "chat_id" not in cols:
+            c.execute("CREATE TABLE lb2 (chat_id INTEGER, user_id INTEGER, wins INTEGER DEFAULT 0, games INTEGER DEFAULT 0, PRIMARY KEY(chat_id,user_id))")
+            c.execute("INSERT OR IGNORE INTO lb2(chat_id,user_id,wins,games) SELECT 0,user_id,wins,games FROM leaderboard")
+            c.execute("DROP TABLE leaderboard")
+            c.execute("ALTER TABLE lb2 RENAME TO leaderboard")
+    except Exception: pass
     c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
     conn.commit(); conn.close()
 
@@ -74,17 +82,19 @@ try:
     _c=sqlite3.connect(DB_PATH); _c.execute("ALTER TABLE stickers ADD COLUMN file_unique_id TEXT"); _c.commit(); _c.close()
 except Exception: pass
 
-def update_leaderboard(winner_id, all_players):
+def update_leaderboard(winner, players, chat_id=0):
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-    for pid in all_players:
-        c.execute("INSERT INTO leaderboard(user_id,wins,games) VALUES(?,0,1) ON CONFLICT(user_id) DO UPDATE SET games=games+1", (pid,))
-    c.execute("UPDATE leaderboard SET wins=wins+1 WHERE user_id=?", (winner_id,))
+    for p in players:
+        c.execute("INSERT OR IGNORE INTO leaderboard(chat_id,user_id,wins,games) VALUES(?,?,0,0)", (chat_id,p))
+        c.execute("UPDATE leaderboard SET games=games+1 WHERE chat_id=? AND user_id=?", (chat_id,p))
+    c.execute("UPDATE leaderboard SET wins=wins+1 WHERE chat_id=? AND user_id=?", (chat_id,winner))
     conn.commit(); conn.close()
 
-def get_top():
+def get_top(chat_id=0):
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-    c.execute("SELECT user_id, wins, games FROM leaderboard ORDER BY wins DESC LIMIT 10")
-    rows = c.fetchall(); conn.close(); return rows
+    c.execute("SELECT user_id, CAST(user_id AS TEXT), wins, games FROM leaderboard WHERE chat_id=? ORDER BY wins DESC, games ASC LIMIT 25", (chat_id,))
+    rows=c.fetchall(); conn.close()
+    return rows
 
 def get_all_stickers():
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
@@ -100,7 +110,6 @@ def register_user(uid, username, fullname=None):
         c.execute("UPDATE users SET username=? WHERE id=?", (username, uid))
         if fullname:
             c.execute("UPDATE users SET full_name=? WHERE id=?", (fullname, uid))
-        c.execute("INSERT OR IGNORE INTO leaderboard(user_id,wins,games) VALUES(?,0,0)", (uid,))
         conn.commit(); conn.close()
     except: pass
 
@@ -735,7 +744,7 @@ async def sticker_listener(msg):
             if game.turn_timer_task: game.turn_timer_task.cancel()
             while game.notif:
                 await bot.send_message(cid,game.notif.pop(0))
-            update_leaderboard(game.winner,list(game.players.keys()))
+            update_leaderboard(game.winner,list(game.players.keys()),cid)
             try: await bot.unpin_chat_message(cid)
             except Exception: pass
             t="\U0001f3c6 \u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b \u0438\u0433\u0440\u044b!\n"
@@ -766,7 +775,7 @@ async def sticker_listener(msg):
         if game.turn_timer_task: game.turn_timer_task.cancel()
         while game.notif:
             await bot.send_message(cid,game.notif.pop(0))
-        update_leaderboard(game.winner,list(game.players.keys()))
+        update_leaderboard(game.winner,list(game.players.keys()),cid)
         try: await bot.unpin_chat_message(cid)
         except Exception: pass
         t="\U0001f3c6 \u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b \u0438\u0433\u0440\u044b!\n"
@@ -826,7 +835,7 @@ async def intercept_uno(msg):
         except: pass
         if game.winner is not None:
             if game.turn_timer_task: game.turn_timer_task.cancel()
-            update_leaderboard(game.winner,list(game.players.keys()))
+            update_leaderboard(game.winner,list(game.players.keys()),cid)
             wn=game.player_names[game.winner]
             await bot.send_message(cid,"\U0001f3c6 "+wn+"!"); games.pop(cid,None); return
         if act=="choose_color":
@@ -915,11 +924,13 @@ async def cmd_start(msg):
 
 @dp.message_handler(commands=["top"])
 async def cmd_top(msg):
-    rows=get_top()
+    rows=get_top(msg.chat.id)
     if not rows: return await msg.answer("\U0001f4ca \u041d\u0435\u0442 \u0438\u0433\u0440.")
     medals=["\U0001f947","","\U0001f949"]; t="\U0001f3c6 \u0422\u043e\u043f-25 \u0438\u0433\u0440\u043e\u043a\u043e\u0432:\n"
     for i,row in enumerate(rows):
-        uid,w,gc=row[0],row[2],row[3]
+        uid=row[0]
+        if len(row)>=4: w,gc=row[2],row[3]
+        else: w,gc=row[1],row[2]
         conn=sqlite3.connect(DB_PATH); c=conn.cursor()
         c.execute("SELECT full_name,username FROM users WHERE id=?",(uid,))
         urow=c.fetchone(); conn.close()
