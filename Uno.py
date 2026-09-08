@@ -404,8 +404,13 @@ class UnoGame:
             self.left_players.add(uid)
             self.afk_count.pop(uid,None); self.pending_draw.pop(uid,None)
             if uid in self.turn_order:
+                i=self.turn_order.index(uid)
                 self.turn_order.remove(uid)
-                if self.current_idx>=len(self.turn_order) and self.turn_order: self.current_idx=0
+                if i<self.current_idx: self.current_idx-=1
+            if self.turn_order:
+                self.current_idx=self.current_idx%len(self.turn_order)
+            else:
+                self.current_idx=0
 
     def get_inline_results(self, uid):
         results=[]; hand=self.players.get(uid,[])
@@ -1167,14 +1172,17 @@ async def cmd_uno(msg):
     cid=msg.chat.id; uid=msg.from_user.id
     game=games.get(cid)
     if not game or not game.is_active: return
-    if uid not in game.uno_pending: return
-    # Player said UNO in time!
-    del game.uno_pending[uid]
-    if uid in game.uno_task:
-        game.uno_task[uid].cancel()
-        del game.uno_task[uid]
+    if uid not in game.players: return
     nm=game.player_names.get(uid,IGROK_CAP)
-    await msg.answer("✅ "+nm+" сказал Уно!")
+    if uid in game.uno_pending:
+        del game.uno_pending[uid]
+        await msg.answer("\u2705 "+nm+" \u0441\u043a\u0430\u0437\u0430\u043b \u0423\u043d\u043e! \u0417\u0430\u0441\u0447\u0438\u0442\u0430\u043d\u043e, \u0448\u0442\u0440\u0430\u0444\u0430 \u043d\u0435 \u0431\u0443\u0434\u0435\u0442.")
+        return
+    if len(game.players.get(uid,[]))==1:
+        await msg.answer("\u2705 "+nm+" \u0441\u043a\u0430\u0437\u0430\u043b \u0423\u043d\u043e!")
+        return
+    await msg.answer("\u2139\ufe0f "+nm+", \u0441\u0435\u0439\u0447\u0430\u0441 \u043d\u0435 \u043d\u0443\u0436\u043d\u043e \u0433\u043e\u0432\u043e\u0440\u0438\u0442\u044c \u0423\u043d\u043e \u2014 \u0443 \u0432\u0430\u0441 \u043d\u0435 \u043e\u0434\u043d\u0430 \u043a\u0430\u0440\u0442\u0430.")
+
 
 @dp.message_handler(commands=["unogo"])
 async def cmd_unogo(msg):
