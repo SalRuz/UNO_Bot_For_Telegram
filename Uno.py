@@ -669,6 +669,7 @@ async def sticker_listener(msg):
             # Draw EXACTLY pending amount, or draw until playable if no pending
             pending=game.pending_draw.get(uid,0)
             if pending>0:
+                game.check_uno_penalty(uid)
                 game.process_pending_draw(uid)
                 nm=game.player_names.get(uid,IGROK_CAP)
                 await bot.send_message(cid,"\U0001f0cf "+nm+" взял "+str(pending)+" карт")
@@ -682,6 +683,7 @@ async def sticker_listener(msg):
                 game.next_turn()
                 await send_state(cid,game,skip_sticker=True)
             else:
+                game.check_uno_penalty(uid)
                 drawn=game.draw_until_playable(uid)
                 nm=game.player_names.get(uid,IGROK_CAP)
                 if drawn>0: await bot.send_message(cid,"\U0001f0cf "+nm+" взял "+str(drawn)+" карт")
@@ -693,6 +695,7 @@ async def sticker_listener(msg):
                     await send_state(cid,game,skip_sticker=True)
         elif act=="pass":
             if game.current_player()!=uid: return
+            game.check_uno_penalty(uid)
             game.pending_draw.pop(uid,None)
             game.pending_draw.pop(uid,None)
             game.next_turn(); await send_state(cid,game,skip_sticker=True)
@@ -893,6 +896,7 @@ async def intercept_uno(msg):
             pending=game.pending_draw.get(uid,0)
             nm=game.player_names.get(uid,IGROK_CAP)
             if pending>0:
+                game.check_uno_penalty(uid)
                 game.process_pending_draw(uid)
                 await bot.send_message(cid,"\U0001f0cf "+nm+" взял "+str(pending)+" карт")
                 if game.discard and game.discard[-1].ctype=="draw_two":
@@ -904,6 +908,7 @@ async def intercept_uno(msg):
                 game.next_turn()
                 await send_state(cid,game,skip_sticker=True)
             else:
+                game.check_uno_penalty(uid)
                 drawn=game.draw_until_playable(uid)
                 if drawn>0: await bot.send_message(cid,"\U0001f0cf "+nm+" взял "+str(drawn)+" карт")
                 if game.has_playable(uid):
