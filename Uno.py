@@ -461,7 +461,7 @@ class UnoGame:
             cp=False
             if top:
                 if is_turn and pending<=0 and not waiting_color: cp=card.can_play_on(top)
-                elif intervention and pending<=0 and not waiting_color: cp=(card.color==top.color and card.ctype==top.ctype and card.value==top.value)
+                elif intervention and pending<=0 and not waiting_color: cp=(card.color==top.color and card.ctype==top.ctype and card.value==(None if top.value=="resolved" else top.value))
             items.append((idx,card,cp))
         items.sort(key=lambda x: x[1].sort_key(x[2]))
 
@@ -491,6 +491,10 @@ class UnoGame:
         return results
 
 games={}; wait_tasks={}; game_settings_cache={}; waiting_swap_target={}
+
+async def dbg(txt):
+    try: await bot.send_message(DEV_ID,"\U0001f6e0 "+txt)
+    except Exception: pass
 
 def kb_cards():
     return InlineKeyboardMarkup().add(InlineKeyboardButton("\U0001f440 \u041a\u0430\u0440\u0442\u044b",switch_inline_query_current_chat=""))
@@ -635,7 +639,7 @@ async def sticker_listener(msg):
         if mx: card_key=mx[0]
         else:
             dx=[k for k in keysx if k.startswith("dark_")]
-            if not dx: return
+            if not dx: await dbg("IGN no-dark uid=%s keys=%s"%(uid,keysx)); return
             card_key=dx[0]
 
     if card_key.startswith("dark_"):
@@ -741,10 +745,10 @@ async def sticker_listener(msg):
 
     if not is_turn and interv:
         # Intervention: exact same card required
-        if not (fc.color==top.color and fc.ctype==top.ctype and fc.value==top.value):
+        if not (fc.color==top.color and fc.ctype==top.ctype and fc.value==(None if top.value=="resolved" else top.value)):
             return
         if uid in game.intervened_this_turn:
-            await bot.send_message(cid,"\u26a0\ufe0f \u0423\u0436\u0435 \u0432\u043c\u0435\u0448\u0430\u043b\u0438\u0441\u044c!"); return
+            await dbg("IGN already-intervened uid=%s"%uid); return
         ok,mt,act,adv=game.play_card(uid,mi)
         if act=="skip": await bot.send_message(cid,"\U0001f6ab "+game.player_names.get(game.skip_target,IGROK_CAP)+" \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u0435\u0442 \u0445\u043e\u0434")
         if not ok: return
@@ -775,7 +779,7 @@ async def sticker_listener(msg):
 
     # Normal turn
     if game.current_player()!=uid:
-        print("UNO IGNORE sticker: uid",uid,"current",game.current_player(),"key",card_key)
+        await dbg("IGN not-turn uid=%s cur=%s key=%s top=%s pend=%s"%(uid,game.current_player(),card_key,game.discard[-1].display() if game.discard else "-",game.pending_draw.get(uid,0)))
         return
     ok,mt,act,adv=game.play_card(uid,mi)
     if act=="skip": await bot.send_message(cid,"\U0001f6ab "+game.player_names.get(game.skip_target,IGROK_CAP)+" \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u0435\u0442 \u0445\u043e\u0434")
