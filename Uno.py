@@ -252,8 +252,16 @@ class UnoGame:
         return False
 
     def play_card(self, uid, idx):
-        if self.pending_draw.get(uid,0)>0:
-            return False,"\u26a0\ufe0f \u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0432\u043e\u0437\u044c\u043c\u0438\u0442\u0435 \u043a\u0430\u0440\u0442\u044b!",None,False
+        tr=self.pending_draw.get(uid,0)
+        if tr>0:
+            top0=self.discard[-1] if self.discard else None
+            h0=self.players.get(uid,[])
+            c0=h0[idx] if idx<len(h0) else None
+            if not (top0 and c0 and c0.ctype==top0.ctype and c0.ctype in ("draw_two","wild_draw_four")):
+                return False,"\u26a0\ufe0f \u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0432\u043e\u0437\u044c\u043c\u0438\u0442\u0435 \u043a\u0430\u0440\u0442\u044b!",None,False
+            self.pending_draw.pop(uid,None)
+        else:
+            tr=0
         if not self.can_play(uid,idx): return False,"\U0001f6ab \u041d\u0435\u043b\u044c\u0437\u044f!",None,False
         if self.current_player()==uid: self.check_uno_penalty(uid)
         card=self.players[uid].pop(idx)
@@ -460,7 +468,8 @@ class UnoGame:
         for idx,card in enumerate(hand):
             cp=False
             if top:
-                if is_turn and pending<=0 and not waiting_color: cp=card.can_play_on(top)
+                if is_turn and pending>0 and not waiting_color: cp=(top.ctype in ("draw_two","wild_draw_four") and card.ctype==top.ctype)
+                elif is_turn and pending<=0 and not waiting_color: cp=card.can_play_on(top)
                 elif intervention and pending<=0 and not waiting_color: cp=(card.color==top.color and card.ctype==top.ctype and card.value==(None if top.value=="resolved" else top.value))
             items.append((idx,card,cp))
         items.sort(key=lambda x: x[1].sort_key(x[2]))
