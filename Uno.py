@@ -1063,6 +1063,7 @@ async def cb_color(q):
     if not game: return await q.answer("\u26a0\ufe0f",show_alert=True)
     ps=q.data.split(":"); color,puid=ps[1],int(ps[2])
     if game.waiting_color_for!=puid: return await q.answer("\u26a0\ufe0f \u041d\u0435 \u0432\u0430\u0448 \u0432\u044b\u0431\u043e\u0440!",show_alert=True)
+    if q.from_user.id!=puid: return await q.answer("\u26a0\ufe0f \u041d\u0435 \u0432\u0430\u0448 \u0432\u044b\u0431\u043e\u0440!",show_alert=True)
     game.waiting_color_for=None
     try: await q.message.edit_reply_markup(reply_markup=None)
     except Exception: pass
